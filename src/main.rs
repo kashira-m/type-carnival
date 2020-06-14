@@ -1,165 +1,185 @@
 extern crate termion;
-extern crate rand;
 
-// terminal controll crates
-use termion::screen::*;
-use termion::raw::IntoRawMode;
-use std::io::{Read, Write, stdout, stdin, BufReader, BufRead};
-use termion::input::TermRead;
+
+use termion::{clear, cursor, color};
+use termion::screen::AlternateScreen;
 use termion::event::Key;
 use termion::cursor::Goto;
+use termion::raw::IntoRawMode;
+use std::io::{stdin, stdout, Read, Write};
+use termion::input::TermRead;
 
-use termion::clear;
+use device_query::{DeviceQuery, DeviceState, Keycode};
 
-// other crates
-use std::thread;
-use std::time::Duration;
-// already imported std::io::Read
-use std::fs::File;
-
-use rand::Rng;
-
-struct Game<R, W> {
-    /// The play area width and height
-    width: usize,
-    height: usize,
-    /// standard input
-    stdin: R,
-    /// standard output
-    screen: W,
-    /// word objects
-    wordholder: WordHolder,
-    /// Speed
-    speed: u64,
-    /// Score
-    score: i32,
-    /// The randomizer
-    rng: rand::rngs::ThreadRng,
-}
-
-impl<R: Read, W: Write> Game<R, W> {
-    fn startgame() {
-
-    }
-
-    fn draw_object() {}
-
-    fn make_word(&mut self) {
-        let mut word = self.wordholder.make_object(
-            self.rng.gen_range(0, self.wordholder.words.len()),
-            self.width as u16,
-            self.rng.gen_range(1, self.height) as u16);
-    }
-}
-
-struct WordHolder {
-    /// word object holder
-    w_objects: Vec<WordObj>,
-    /// length of w_object
-    obj_len: usize,
-    /// max size of word holder(words)
-    max_size: u32,
-    /// available word list
-    words: Vec<String>,
-}
-
-impl WordHolder {
-    /// Get words from file
-    fn get_word(&mut self) {
-        let filename = "word.txt";
-
-        let reader = BufReader::new(File::open(filename).expect("cannot open word collection"));
-        for line in reader.lines() {
-            for word in line.unwrap().split_whitespace() {
-                self.words.push(String::from(word));   
-            }
-        }
-    }
-
-    /// Make word onject
-    fn make_object(&mut self, num: usize, x: u16, y:u16) {
-        self.w_objects.push(WordObj {
-            word: self.words[num].clone(),
-            x,
-            y,
-        });
-        self.obj_len += 1;
-    }
-}
-
-struct WordObj {
-    word: String,
-    x: u16,
-    y: u16,
-}
-
-impl WordObj {
-    fn new(word: String, x: u16, y: u16) -> WordObj {
-        WordObj {
-            word, x, y,
-        }
-    }
-
-    fn draw<W: Write>(&mut self, screen: &mut W) {
-        write!(screen, "{}{}", Goto(self.x, self.y), self.word);
-        self.x -=1;
-    }
+#[test]
+fn device_query_works() {
+    // device_query
+    let device_state = DeviceState::new();
+    let keys: Vec<Keycode> = device_state.get_keys();
+    println!("Is A pressed? {}", keys.contains(&Keycode::A));
 }
 
 fn main() {
-    let mut game = initgame(80, 40); 
-}
 
-fn initgame(width: usize, height: usize) {
+    // device_query
+    let device_state = DeviceState::new();
+    let keys: Vec<Keycode> = device_state.get_keys();
+    println!("Is A pressed? {}", keys.contains(&Keycode::A));
 
-    // initialize game window
-    // get in console raw mode
-    let stdin = stdin();
+    // hard coding
+    let mut word_list = ["monji", "nakajima", "rust"];
+
+    // initialize screen
     let mut screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
     write!(screen, "{}{}", clear::All, termion::cursor::Hide);
     screen.flush().unwrap();
 
-    let mut wordholder = WordHolder {
-        w_objects: vec![],
-        obj_len: 0,
-        words: vec![],
-        max_size: 10,
+    let stdin = stdin();
 
-    };
+    // amek object for  test
+    let mut textbox = TextBox::new();
 
-    let mut game = Game {
-        width: 40,
-        height: 70,
-        stdin: stdin,
-        screen: screen,
-        wordholder,
-        speed: 1,
-        score: 0,
-        rng: rand::thread_rng(),
-    };
-}
-
-// not used
-fn words_by_file(filename: &str) -> Vec<String> {
-    let reader = BufReader::new(File::open(filename).expect("cannot open word collection"));
-    let mut words: Vec<String> = vec![];
-    for line in reader.lines() {
-        for word in line.unwrap().split_whitespace() {
-            words.push(String::from(word));   
+    textbox.draw(&mut screen);
+    for c in stdin.keys() {
+        match c.unwrap() {
+            Key::Ctrl('q') => break,
+            Key::Char(' ') => textbox.reset(&mut screen),
+            Key::Char(c) => textbox.get_char(c, &mut screen),
+            Key::Backspace => textbox.delete_char(&mut screen),
+            _ => {},
         }
     }
-    words
-} 
 
-#[test]
-fn word_from_file() {
-    let filename = "word.txt";
-    let reader = BufReader::new(File::open("word.txt").expect("Cannot open file.txt"));
+}
 
-    for line in reader.lines() {
-    for word in line.unwrap().split_whitespace() {
-        println!("word '{}'", word);
+
+pub trait Drawable {
+    fn draw<W: Write>(&mut self, screen: W);
+    fn update<W: Write>(&mut self, screen: W);
+}
+
+struct TextBox {
+    box_shape: Vec<String>,
+    inputs: String,
+    x: u16,
+    y: u16,
+}
+
+impl TextBox {
+    fn new() -> TextBox {
+        let box1 = String::from("╔═════════════════╗");
+        let input = String::from("");
+        let box2 = String::from("╚═════════════════╝");
+
+        TextBox {
+            box_shape: vec![box1, box2],
+            inputs: input,
+            x: 1,
+            y: 1,
+        }
+    }
+
+    fn get_char<W: Write>(&mut self, c: char, screen: W) {
+        self.inputs += &c.to_string();
+        self.update(screen);
+    }
+
+    fn delete_char<W: Write>(&mut self, screen: W) {
+        self.inputs.pop();
+        self.update(screen);
+    }
+
+    fn reset<W: Write>(&mut self, screen: W) {
+        let typed_word = &self.inputs;
+        self.inputs = String::from("");
+        self.update(screen);
+    }
+
+}
+
+impl Drawable for TextBox {
+    fn draw<W: Write>(&mut self, mut screen: W) {
+            write!(screen, "{}{}", Goto(self.x, self.y), self.box_shape[0]).unwrap();
+            write!(screen, "{}{}", Goto(self.x, self.y + 1), self.inputs).unwrap();
+            write!(screen, "{}{}", Goto(self.x, self.y + 2), self.box_shape[1]).unwrap();
+            screen.flush().unwrap();
+    }
+
+    fn update<W: Write>(&mut self, mut screen: W) {
+        write!(screen, "{}{}", Goto(self.x, self.y), self.box_shape[0]).unwrap();
+        write!(screen, "{}{}{}", Goto(self.x, self.y + 1), clear::CurrentLine ,self.inputs).unwrap();
+        write!(screen, "{}{}", Goto(self.x, self.y + 2), self.box_shape[1]).unwrap();
+        screen.flush().unwrap();
     }
 }
 
+
+struct Word {
+    word: String,
+    selected: bool,
+    hitpoint: i8,
+    deleted: bool,
+}
+
+impl Word {
+    fn new(&mut self, word: String) -> Word {
+        Word {
+            word,
+            selected: true,
+            hitpoint: 2,
+            deleted: false
+        }
+    }
+
+    fn typed<W: Write>(&mut self, mut screen: W) {
+        self.hitpoint -= 1;
+        if self.hitpoint <= 0 {
+            self.deleted = true;
+        } else {
+            self.draw(screen);
+        }
+
+    }
+}
+
+impl Drawable for Word {
+    fn draw<W: Write>(&mut self, mut screen: W) {
+        if !self.deleted {
+            match self.hitpoint {
+                2 => write!(screen, "{}{}{}{}",
+                            clear::All,
+                            cursor::Goto(1,1),
+                            color::Fg(color::Blue),
+                            self.word).unwrap(),
+                1 => write!(screen, "{}{}{}{}",
+                            clear::All,
+                            cursor::Goto(1,1),
+                            color::Fg(color::Green),
+                            self.word).unwrap(),
+                _ => {},
+            }
+        }
+    }
+
+    fn update<W: Write>(&mut self, mut screen: W) {
+        if !self.deleted {
+            match self.hitpoint {
+                2 => write!(screen, "{}{}{}{}",
+                            clear::All,
+                            cursor::Goto(1,1),
+                            color::Fg(color::Blue),
+                            self.word).unwrap(),
+                1 => write!(screen, "{}{}{}{}",
+                            clear::All,
+                            cursor::Goto(1,1),
+                            color::Fg(color::Green),
+                            self.word).unwrap(),
+                _ => {},
+            }
+        }
+    }
+}
+
+fn write_word<W: Write>(mut word: Word, mut screen: W) {
+    word.draw(screen);
 }

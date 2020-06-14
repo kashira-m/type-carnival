@@ -1,22 +1,18 @@
 extern crate termion;
 
-use termion::{color, clear};
-use std::time::Duration;
-use std::thread;
+
+use termion::{clear, cursor, color};
+use termion::screen::AlternateScreen;
+use termion::event::Key;
+use termion::cursor::Goto;
+use termion::raw::IntoRawMode;
+use std::io::{BufWriter, BufReader, stdin, stdout, Read, Write};
+use termion::input::TermRead;
 
 fn main() {
-    println!("{red}more red than any comrade{reset}",
-             red   = color::Fg(color::Red),
-             reset = color::Fg(color::Reset));
-    // Sleep for a short period of time.
-    thread::sleep(Duration::from_millis(300));
-    // Go back;
-    println!("\r");
-    // Clear the line and print some new stuff
-    print!("{clear}{red}g{blue}a{green}y{red} space communism{reset}",
-            clear = clear::CurrentLine,
-            red   = color::Fg(color::Red),
-            blue  = color::Fg(color::Blue),
-            green = color::Fg(color::Green),
-            reset = color::Fg(color::Reset));
+    let buffer: Vec<Vec<char>> = vec![vec![]];
+
+    let mut screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
+    write!(screen, "{}{}", clear::All, termion::cursor::Hide);
+    screen.flush().unwrap();
 }
