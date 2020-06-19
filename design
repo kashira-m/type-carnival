@@ -1,3 +1,27 @@
 tui framework termion
 
 screen buffer -> screen 
+
+for c in stdin.keys() {
+        match c.unwrap() {
+            Key::Ctrl('q') => break,
+            Key::Char(' ') => self.compare_result(),
+            Key::Char(c) => self.get_input(c),
+            Key::Backspace => self.inputbox.delete_char(),
+            _ => {},
+        }
+        self.update();
+    }
+
+
+    let mut key_bytes = [0];
+        loop {
+            stdin.read(&mut key_bytes).unwrap();
+            match key_bytes[0] {
+                b' ' => self.compare_result(),
+                017 => break,
+                127 => self.inputbox.delete_char(),
+                _ => self.get_input(key_bytes[0] as char),
+            }
+            self.update();
+        }
