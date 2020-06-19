@@ -14,6 +14,7 @@ use termion::input::TermRead;
 use std::fs::File;
 
 use rand::Rng;
+use rand::seq::SliceRandom;
 
 use std::thread;
 use std::time;
@@ -102,13 +103,16 @@ impl<W: Write> Game<W> {
     fn add_score(&mut self, score: i32) {
         self.score += score;
     }
+    fn subtruct_score(&mut self, score:i32) {
+        self.score -= score;
+    }
 
     fn compare_result(&mut self) {
         if self.inputbox.inputs == self.wordholder.typable.word {
             self.wordholder.change_typable(self.termsize);
             self.add_score(2);
         } else {
-
+            self.subtruct_score(1);
         }
         self.inputbox.reset();
     }
@@ -171,8 +175,10 @@ impl WordHolder {
             }
         }
 
+
         let termsize = termion::terminal_size().unwrap();
         let mut rng = rand::thread_rng();
+        words.shuffle(&mut rng);
 
 
         let mut typable = Word::new(String::from(words.pop().unwrap()), rng.gen_range(top_indent + 1,termsize.1 - bottom_indent));
