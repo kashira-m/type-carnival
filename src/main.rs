@@ -1,9 +1,6 @@
-#![feature(optin_builtin_traits)]
-
-
 extern crate termion;
 
-use termion::{clear, cursor, color, async_stdin};
+use termion::{clear, cursor, color};
 use termion::screen::AlternateScreen;
 use termion::event::Key;
 use termion::cursor::Goto;
@@ -22,10 +19,13 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use futures::prelude::*;
 
+use tokio;
+use tokio::prelude;
+
+
 struct Keys {
     key: termion::event::Key,
 }
-
 
 const top_indent: u16 = 3;
 const bottom_indent: u16 = 4;
@@ -48,7 +48,8 @@ fn key_code_test() {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // initialize screen
     let mut screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
     write!(screen, "{}{}", clear::All, termion::cursor::Hide);
@@ -57,11 +58,12 @@ fn main() {
 
     let mut game = Game::new(screen);
     
-    game.init_game();
+    game.init_game().await;
 }
 
-
-struct Game<W> {
+struct Game<W>
+    where W: Write + Send + 'static
+{
     inputbox: InputBox,
     wordholder: WordHolder,
     screen: W,
@@ -69,7 +71,9 @@ struct Game<W> {
     score: i32
 }
 
-impl<W: Write> Game<W> {
+impl<W> Game<W>
+    where W: Write + Send + 'static
+{
     fn new(screen: W) -> Game<W> {
         let termsize = termion::terminal_size().unwrap();
         Game {
@@ -81,23 +85,59 @@ impl<W: Write> Game<W> {
         }
     }
 
-    fn init_game(mut self) {
+    async fn init_game(mut self) {
         self.draw();
-        self.game_start();
+
+        self.game_start().await.unwrap();
     }
 
-    fn game_start(&mut self) {
-        let mut stdin = stdin();
-            for c in stdin.keys() {
-                match c.unwrap() {
-                    Key::Ctrl('q') => break,
-                    Key::Char(' ') => self.compare_result(),
-                    Key::Char(c) => self.get_input(c),
-                    Key::Backspace => self.inputbox.delete_char(),
-                    _ => {},
+    async fn game_start(mut self) -> Result<(), std::io::Error> 
+    {
+        
+
+        let mut self_ptr = Arc::new(Mutex::new(self));
+        let self1 = Arc::clone(&self_ptr);
+        let self2 = Arc::clone(&self_ptr);
+        let termsize = self2.lock().unwrap().termsize;
+
+        let mut gaming = true;
+
+        tokio::spawn(
+            async move {
+                let mut counter = 0;
+                loop {
+                    if gaming == false {
+                        break
+                    }
+                    if counter == 9 {
+                        self2.lock().unwrap().wordholder.add_typable(termsize);
+                        counter = 0;
+                    }
+                    tokio::time::delay_for(time::Duration::from_millis(1000)).await;
+                    self2.lock().unwrap().wordholder.move_forward();
+                    self2.lock().unwrap().update();
+                    counter += 1;
                 }
-            self.update();
+            }
+        );
+        let mut stdin = stdin();
+        for c in stdin.keys() {
+            if gaming == false {
+                break
+            }
+            match c.unwrap() {
+                Key::Ctrl('q') => break,
+                Key::Char(' ') => match self1.lock().unwrap().compare_result() {
+                    true => gaming = false,
+                    false => {},
+                },
+                Key::Char(c) => self1.lock().unwrap().get_input(c),
+                Key::Backspace => self1.lock().unwrap().inputbox.delete_char(),
+                _ => {},
+            }
+            self1.lock().unwrap().update();
         }
+        Ok(())
     }
 
     fn add_score(&mut self, score: i32) {
@@ -107,14 +147,23 @@ impl<W: Write> Game<W> {
         self.score -= score;
     }
 
-    fn compare_result(&mut self) {
-        if self.inputbox.inputs == self.wordholder.typable.word {
-            self.wordholder.change_typable(self.termsize);
-            self.add_score(2);
-        } else {
-            self.subtruct_score(1);
+    fn compare_result(&mut self) -> bool {
+        for i in 0..self.wordholder.typables.len() {
+            let mut word = self.wordholder.typables.get(i);
+            if word.is_some() {
+                if self.inputbox.inputs == word.unwrap().word {
+                    self.wordholder.pop_typable(i);
+                    self.wordholder.add_typable(self.termsize);
+                    self.add_score(2);
+                }
+            }
         }
+        if self.wordholder.typables.len() == 0 {
+            return true
+        }
+
         self.inputbox.reset();
+        false
     }
     fn get_input(&mut self, c: char) {
         self.inputbox.get_char(c);
@@ -125,7 +174,13 @@ impl<W: Write> Game<W> {
     }
 
     fn gameover(&mut self) {
-        self.wordholder.typable = Word::new(String::from("Game Over"), self.termsize.1/2);
+        for i in 0..self.wordholder.typables.len() {
+            self.wordholder.typables.pop().unwrap();
+        }
+    }
+
+    fn success(&mut self) {
+
     }
 
     fn update(&mut self) {
@@ -138,7 +193,9 @@ impl<W: Write> Game<W> {
         }
 
         self.inputbox.update(&mut self.screen);
-        self.wordholder.typable.update(&mut self.screen);
+        for i in 0..self.wordholder.typables.len() {
+            self.wordholder.typables[i].update(&mut self.screen);
+        }
 
         self.screen.flush().unwrap();
     }
@@ -150,19 +207,27 @@ impl<W: Write> Game<W> {
             write!(self.screen, "{}{}", Goto(i, self.termsize.1 - bottom_indent), "_").unwrap()
         }
         self.inputbox.draw(&mut self.screen);
-        self.wordholder.typable.draw(&mut self.screen);
-
+        for i in 0..self.wordholder.typables.len() {
+            self.wordholder.typables[i].draw(&mut self.screen);
+        }
         self.screen.flush().unwrap();
     }
 }
-
+#[test]
+fn index_test() {
+    for _ in 0..1 {
+        println!("Hello");
+    }
+}
 struct WordHolder {
     /// usable word list from file
     word_list: Vec<String>,
     ///
-    typable: Word,
-    /// random number generator for word place
-    rng: rand::rngs::ThreadRng,
+    typables: Vec<Word>,
+    /// max_size of typable
+    max_size: usize,
+    // / random number generator for word place
+    //rng: rand::rngs::ThreadRng,
 }
 
 impl WordHolder {
@@ -179,27 +244,45 @@ impl WordHolder {
         let termsize = termion::terminal_size().unwrap();
         let mut rng = rand::thread_rng();
         words.shuffle(&mut rng);
+        let max_size = 5;
 
+        let mut typables:Vec<Word> = Vec::with_capacity(max_size);
 
-        let mut typable = Word::new(String::from(words.pop().unwrap()), rng.gen_range(top_indent + 1,termsize.1 - bottom_indent));
+        
+        let typable = Word::new(String::from(words.pop().unwrap()), rng.gen_range(top_indent + 1,termsize.1 - bottom_indent));
+        typables.push(typable);
+        
+
         WordHolder {
             word_list: words,
-            typable,
-            rng,
+            typables,
+            max_size,
         }
     }
 
-    fn change_typable(&mut self, termsize: (u16, u16)) {
-        self.typable = Word::new(self.word_list.pop().unwrap() ,self.rng.gen_range(top_indent + 1,termsize.1 - bottom_indent));
+    fn add_typable(&mut self, termsize: (u16, u16)) {
+        if self.typables.len() < self.max_size && self.word_list.len() != 0{
+            let mut rng = rand::thread_rng();
+            self.typables.push(
+                Word::new(
+                    self.word_list.pop().unwrap(),
+                    rng.gen_range(top_indent + 1,termsize.1 - bottom_indent)));
+        }
     }
-
+    fn pop_typable(&mut self, i:usize) {
+        self.typables.remove(i);
+    }
     fn move_forward(&mut self) {
-        self.typable.x += 1;
+        for i in 0..self.typables.len() {
+            self.typables[i].x += 1;
+        }
     }
 
     fn wordzone(&mut self, max_x:u16) -> bool {
-        if self.typable.x + self.typable.word.len() as u16 > max_x {
-            return false
+        for i in 0..self.typables.len() {
+            if self.typables[i].x + self.typables[i].word.len() as u16 > max_x {
+                return false
+            }
         }
         true
     }
@@ -243,7 +326,7 @@ impl InputBox {
     }
 
     fn reset(&mut self) {
-        let typed_word = &self.inputs;
+        //let typed_word = &self.inputs;
         self.inputs = String::from("");
     }
 
@@ -269,7 +352,6 @@ impl Drawable for InputBox {
 
 struct Word {
     word: String,
-    selected: bool,
     hitpoint: i8,
     deleted: bool,
     x: u16,
@@ -281,18 +363,10 @@ impl Word {
         
         Word {
             word,
-            selected: true,
             hitpoint: 2,
             deleted: false,
             x:1,
             y,
-        }
-    }
-
-    fn typed(&mut self) {
-        self.hitpoint -= 1;
-        if self.hitpoint <= 0 {
-            self.deleted = true;
         }
     }
 }
